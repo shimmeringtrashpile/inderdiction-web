@@ -1,0 +1,28 @@
+body {
+  margin: 0;
+  padding: 0;
+}
+#map {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 100%;
+}
+
+#animation-phase-container {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: white;
+  padding: 10px;
+  font-family: sans-serif;
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+}
+
+#animation-phase {
+  margin-left: 5px;
+  font-weight: 600;
+  font-size: 30px;
+}
