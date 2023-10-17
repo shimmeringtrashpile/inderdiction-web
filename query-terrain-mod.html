@@ -1,0 +1,233 @@
+<!-- Source: https://docs.mapbox.com/mapbox-gl-js/example/query-terrain-elevation/ -->
+
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Query terrain elevation</title>
+    <link rel="stylesheet" href="styles.css">
+
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.14.1/mapbox-gl.js"></script>
+</head>
+
+<body>
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+    <div id="map"></div>
+    <script>
+        mapboxgl.accessToken = 'pk.eyJ1Ijoicm9iZGVhZHRlY2giLCJhIjoiY2s1ZzBnc21oMDJ4aDNqbnViYnF0cWY3aSJ9.exNiw79g36bwHou-ZRrLjA';
+        (async() => {
+            const map = new mapboxgl.Map({
+                container: 'map',
+                zoom: 13,
+                center: [6.58968, 45.39701],
+                pitch: 76,
+                bearing: 150,
+                // Choose from Mapbox's core styles, or make your own style with Mapbox Studio
+                style: 'mapbox://styles/mapbox/satellite-streets-v12',
+                interactive: false,
+                hash: false
+            });
+
+            // Start downloading the route data, and wait for map load to occur in parallel
+            const [pinRouteGeojson] = await Promise.all([
+                fetch(
+                    'https://docs.mapbox.com/mapbox-gl-js/assets/route-pin.geojson'
+                ).then((response) => response.json()),
+                map.once('style.load')
+            ]);
+
+            // Set custom fog
+            map.setFog({
+                'range': [-0.5, 2],
+                'color': '#def',
+                'high-color': '#def',
+                'space-color': '#def'
+            });
+
+            // Add terrain source, with slight exaggeration
+            map.addSource('mapbox-dem', {
+                'type': 'raster-dem',
+                'url': 'mapbox://mapbox.terrain-rgb',
+                'tileSize': 512,
+                'maxzoom': 14
+            });
+            map.setTerrain({
+                'source': 'mapbox-dem',
+                'exaggeration': 1.5
+            });
+
+            const pinRoute = pinRouteGeojson.features[0].geometry.coordinates;
+            // Create the marker and popup that will display the elevation queries
+            const popup = new mapboxgl.Popup({
+                closeButton: false
+            });
+            const marker = new mapboxgl.Marker({
+                    color: 'red',
+                    scale: 0.8,
+                    draggable: false,
+                    pitchAlignment: 'auto',
+                    rotationAlignment: 'auto'
+                })
+                .setLngLat(pinRoute[0])
+                .setPopup(popup)
+                .addTo(map)
+                .togglePopup();
+
+            // Add a line feature and layer. This feature will get updated as we progress the animation
+            map.addSource('line', {
+                type: 'geojson',
+                // Line metrics is required to use the 'line-progress' property
+                lineMetrics: true,
+                data: pinRouteGeojson
+            });
+            map.addLayer({
+                type: 'line',
+                source: 'line',
+                id: 'line',
+                paint: {
+                    'line-color': 'rgba(0,0,0,0)',
+                    'line-width': 5
+                },
+                layout: {
+                    'line-cap': 'round',
+                    'line-join': 'round'
+                }
+            });
+
+            await map.once('idle');
+            // The total animation duration, in milliseconds
+            const animationDuration = 20000;
+            // Use the https://turfjs.org/ library to calculate line distances and
+            // sample the line at a given percentage with the turf.along function.
+            const path = turf.lineString(pinRoute);
+            // Get the total line distance
+            // before the animation, calculate the length of the line
+            const pathDistance = turf.lineDistance(path);
+            let start;
+
+            function frame(time) {
+                if (!start) start = time;
+                const animationPhase = (time - start) / animationDuration;
+                if (animationPhase > 1) {
+                    return;
+                }
+
+                // Get the new latitude and longitude by sampling along the path
+                const alongPath = turf.along(path, pathDistance * animationPhase)
+                    .geometry.coordinates;
+                const lngLat = {
+                    lng: alongPath[0],
+                    lat: alongPath[1]
+                };
+
+                // calculate the distance along the path based on the animationPhase
+                const [lng, lat] = turf.along(path, pathDistance * animationPhase).geometry
+                    .coordinates;
+
+                // Sample the terrain elevation. We round to an integer value to
+                // prevent showing a lot of digits during the animation
+                const elevation = Math.floor(
+                    // Do not use terrain exaggeration to get actual meter values
+                    map.queryTerrainElevation(lngLat, {
+                        exaggerated: false
+                    })
+                );
+
+                // Update the popup altitude value and marker location
+                // popup.setHTML('Altitude: ' + elevation + 'm<br/>');
+                marker.setLngLat(lngLat);
+
+                // Reduce the visible length of the line by using a line-gradient to cutoff the line
+                // animationPhase is a value between 0 and 1 that represents the progress of the animation
+                map.setPaintProperty('line', 'line-gradient', [
+                    'step', ['line-progress'],
+                    'yellow',
+                    animationPhase,
+                    'rgba(255, 0, 0, 0)'
+                ]);
+
+                // Rotate the camera at a slightly lower speed to give some parallax effect in the background
+                // const rotation = 150 - animationPhase * 40.0;
+                // map.setBearing(rotation % 360);
+
+                const camera = map.getFreeCameraOptions();
+
+                map.setFreeCameraOptions(camera);
+
+                const cameraRouteDistance = turf.lineDistance(
+                    turf.lineString(pinRoute)
+                );
+
+                const phase = (time - start) / animationDuration;
+
+
+                const alongCamera = turf.along(
+                    turf.lineString(pinRoute),
+                    cameraRouteDistance * phase
+                ).geometry.coordinates;
+
+                const cameraAltitude = 4000;
+
+
+                // set the position and altitude of the camera
+                camera.position = mapboxgl.MercatorCoordinate.fromLngLat({
+                        lng: alongCamera[0],
+                        lat: alongCamera[1]
+                    },
+                    cameraAltitude
+                );
+
+
+
+                window.requestAnimationFrame(frame);
+
+                //RR: I made this up based on mapboxgl.Map()
+                let startBearing = 150
+
+                const bearing = startBearing - animationPhase * 200.0;
+                const computeCameraPosition = (
+                    pitch,
+                    bearing,
+                    targetPosition,
+                    altitude,
+                    smooth = false
+                ) => {
+                    var bearingInRadian = bearing / 57.29;
+                    var pitchInRadian = (90 - pitch) / 57.29;
+
+                    var lngDiff =
+                        ((altitude / Math.tan(pitchInRadian)) *
+                            Math.sin(-bearingInRadian)) /
+                        70000; // ~70km/degree longitude (accurate enough for France, but will not work everywhere).
+                    var latDiff =
+                        ((altitude / Math.tan(pitchInRadian)) *
+                            Math.cos(-bearingInRadian)) /
+                        110000 // 110km/degree latitude
+
+                    var correctedLng = targetPosition.lng + lngDiff;
+                    var correctedLat = targetPosition.lat - latDiff;
+
+                    const newCameraPosition = {
+                        lng: correctedLng,
+                        lat: correctedLat
+                    };
+
+                    // from https://codepen.io/ma77os/pen/OJPVrP
+                    function lerp(start, end, amt) {
+                        return (1 - amt) * start + amt * end
+                    }
+                    return newCameraPosition;
+                    console.log(newCameraPosition);
+                }
+            }
+
+            window.requestAnimationFrame(frame);
+        })();
+    </script>
+
+</body>
+
+</html>
